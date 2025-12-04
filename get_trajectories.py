@@ -1,8 +1,5 @@
 # %%
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-from scipy.stats import norm
 import pandas as pd
 import itertools
 import time
@@ -10,34 +7,36 @@ import multiprocessing
 from scipy.integrate import quad
 import os
 
-# %%
-# UNITS
+########  DEFINE GLOBAL UNITS & CONSTANTS
 
-mp = 0.938 # GeV
 GeV = 1
+mp = 0.938*GeV
 gram = 5.62e23*GeV
-cm = 1/(1000*100)
 km = 1
+cm = 1/(1e5) * km
+
+sec=1
+c = 299792.458*km/sec
+
+######## DEFINE EARTH COMPOSITION PARAMETERS
 
 Rearth = 6371*km
 Rcore = 3480*km
 Rmantle = 6346*km
 
-sec=1
-c = 300000*km/sec
-
-# input parameters
-
-# %%
 # element mass number
 elements = np.array([16, 28, 27, 56, 40, 23, 39, 24, 48, 57, 59, 31, 32])
 
-# percent by weight of each element
+# percent by weight of each element in each Earth layer
 crust = np.array([46.7, 27.7, 8.1, 5.1, 3.7, 2.8, 2.6, 2.1, 0.6, 0.0, 0.0, 0.0, 0.0])/100
 mantle = np.array([44.3, 21.3, 2.3, 6.3, 2.5, 0.0, 0.0, 22.3, 0.0, 0.2, 0.0, 0.0, 0.0])/100
 core = np.array([0.0, 0.0, 0.0, 84.5, 0.0, 0.0, 0.0, 0.0, 0.0, 5.6, 0.3, 0.6, 9.0])/100
 
-def layername(r): # r in km
+######## DEFINE HELPFUL FUNCTIONS: SCATTERING IN THE EARTH
+
+# returns: current layer in Earth
+# input: radius from the centre of the Earth (km)
+def layername(r):
     if r <= 1:
         return "centre"
     if r <= 3480*km:
@@ -49,8 +48,9 @@ def layername(r): # r in km
     else:
         return np.zeros_like(crust)
 
-
-def composition(r): # r in km
+# returns: elemental composition of current layer in Earth
+# input: radius from centre of the Earth (km)
+def composition(r):
     if r <= 3480*km:
         return core
     elif r <= 6346*km:
@@ -60,8 +60,11 @@ def composition(r): # r in km
     else:
         return np.zeros_like(crust)
 
-def rho(r): # r in km, density in g/cm^3
-    x = r / (6371*km) # renormalized radius from PREM
+# returns: density (g/cm^3) of Earth material
+# input: radius from centre of the Earth (km)
+def rho(r):
+    # renormalized radius used in PREM density equation
+    x = r / (6371*km) 
 
     if r <= 1221.5*km:
         return 13.0885 - 8.8381*x**2
@@ -85,17 +88,25 @@ def rho(r): # r in km, density in g/cm^3
         return 1.02
     else:
         return 0
-    
+
+# returns: number density of Earth material (atom/cm^3)
+# input: radius from centre of the Earth (km)
 def n_composition(r):
-    ns = [(rho(r)*composition(r)[val]*gram)/(elements[val]*mp) for val in range(len(elements))] # atoms per cm^3
+    ns = [(rho(r)*composition(r)[val]*gram)/(elements[val]*mp) for val in range(len(elements))]
     return ns
 
+# returns: number density of a particular atom in Earth material (atom/cm^3)
+# input: index of element as defined in "elements" array above; radius from centre of the Earth (km)
 def nA(Aind, r):
     return n_composition(r)[Aind]
 
+# returns: reduced mass of two masses a, b
+# input: two masses
 def mu(a, b):
     return a*b/(a+b)
 
+# returns: nuclear radius in natural units, used in Helm form factor
+# input: nuclear mass number A
 def Rnuc(A):
     sk = 0.9/0.197 #(* nuclear skin thickness, GeV^-1 *)
     a =  0.52/0.197 #(* GeV^-1 *)
@@ -104,32 +115,33 @@ def Rnuc(A):
 
     return Rnuc
 
+# returns: Helm form factor, squared 
+# input: momentum transfer q, radius r, and nuclear skin thickness s
 def helm2(q, r, s): #(* Helm form factor, squared, for momentum transfer q, radius r, and nuclear skin thickness s *)
-    #q = np.sqrt(2*mA*Er)
-
-    #if q == 0:
-    #    return 1
-
     def j1(x):
         return np.sin(x)/x**2 - np.cos(x)/x; # spherical Bessel function
     Fa2 = (3*(j1(q*r)/(q*r)))**2*np.exp(-(q*s)**2)*np.heaviside(q*r-0.0001, 1)+np.heaviside(0.0001 - q*r, 1)
 
     return  Fa2
 
+# returns: DM constituent-nucleus cross-section with some nucleus in the Earth, cm^2
+# input: index of target nucleus, DM mass in GeV,  DM constituent-nucleon cross-section in cm^2, and DM velocity in km/s.
 def sigmaAd(Aind, mx, sigmand, vel): # cm^2
     A = elements[Aind]
     mA = A*mp
 
-    vel = vel/(300000)
+    vel = vel/c
 
     Ermax = 2*mu(mx, mA)**2*(vel)**2/mA
 
     func_dsigmaAd = lambda Er: A**2 * sigmand * (mu(mA, mx)/mu(mp, mx))**2 * helm2(np.sqrt(2*mA*Er), Rnuc(A), s=0.9/0.197)*np.heaviside(np.sqrt(2)*vel*mu(mx, mA)- np.sqrt(2*mA*Er), 1)
 
     sigmaAd = mA/(2*(mu(mA, mx)*(vel))**2)*quad(func_dsigmaAd, 0, Ermax, epsabs=1.e-20, epsrel=1.e-20, limit=50)[0]
-    return sigmaAd#A**2 * sigmand * (mu(mA, mx)/mu(mp, mx))**2
+    return sigmaAd
 
-def lambdaMFP(r, mx, sigmand, vel): # in km
+# returns: local mean free path of the DM constituent, in km
+# input: radius from centre of Earth in km, DM mass in GeV,  DM constituent-nucleon cross-section in cm^2, and DM velocity in km/s.
+def lambdaMFP(r, mx, sigmand, vel):
     lambdaT = 0
     for Aind in range(len(elements)):
         lambdainv = nA(Aind, r)*sigmaAd(Aind, mx, sigmand, vel) # cm
@@ -137,54 +149,16 @@ def lambdaMFP(r, mx, sigmand, vel): # in km
             lambdaT += lambdainv
     return 1/lambdaT * cm
 
+# returns: a number of randomly-chosen target atoms to use at the point of scattering, based on elemental abundances
+# input: radius from centre of Earth in km, a number of desired samples
 def get_target(r, num): # returns index of target atom
     targetcomp = composition(r)
     Aind = np.random.choice(range(len(elements)), p = targetcomp/np.sum(targetcomp), size=num)
     return Aind
 
-def nAdetector(element):
-    nAr = 1.4 * 6.022e23/40 # target atoms per cm^3
-    nXe = 3.52 * 6.022e23/131 # target atoms per cm^3
-    if element == "Xenon":
-        return  nXe
-    elif element == "Argon":
-        return nAr
-    return 0
-
-def num_composites_earthpersec(Nd, mx):
-    rhodm = 0.3*GeV/cm**3 # in m/km^3
-    Md = Nd*mx*GeV
-    veldm = 1e-3*c # km/s
-    flux = rhodm*veldm/Md # km^(-2)s^-1
-    return flux*(np.pi*Rearth**2)
-
-def sigmaAddetector(element, sigmand, mx, vel): # cm^2
-    if element == "Xenon":
-        A = 131
-    elif element == "Argon":
-        A = 40
-    mA = A*mp
-
-    Ermax = 2*mu(mx, mA)**2*(vel)**2/mA
-
-    func_dsigmaAd = lambda Er: A**2 * sigmand * (mu(mA, mx)/mu(mp, mx))**2 * helm2(np.sqrt(2*mA*Er), Rnuc(A), s=0.9/0.197)* helm2(np.sqrt(2*mA*Er), Rnuc(A), s=0.9/0.197)*np.heaviside(np.sqrt(2)*vel*mu(mx, mA)- np.sqrt(2*mA*Er), 1)
-
-    sigmaAd = mA/(2*(mu(mA, mx)*(vel))**2)*quad(func_dsigmaAd, 0, Ermax, epsabs=1.e-20, epsrel=1.e-20, limit=50)[0]#quad(func_dsigmaAd, 0, Ermax, epsabs=1.e-20, epsrel=1.e-20, limit=50)[0]
-
-    return sigmaAd
-
-
-
-# %%
-def sample_path_length_arr(mx, sigmand, rs, vs, num_particles, num_steps):
-    zeta = np.random.uniform(0, 1, (num_steps,num_particles))
-    
-    mfps = np.array(list(itertools.repeat([lambdaMFP(rs[i], mx, sigmand, vs[i]) for i in range(len(rs))], num_steps)))
-
-    Ls = -np.log(1 - zeta)*mfps
-
-    return Ls
-
+# returns: sampled distance until next scatter for a set of constituents, in km
+# input: constituent parameters (mx, sigmand), their radii from Earth centre (km) and velocities, 
+#       the number of constituents to calculate this for
 def sample_path_length(mx, sigmand, rs, vs, num_particles):
 
     mfps = np.array([lambdaMFP(rs[i], mx, sigmand, vs[i]) for i in range(len(rs))])
@@ -194,10 +168,11 @@ def sample_path_length(mx, sigmand, rs, vs, num_particles):
 
     return Ls
 
-
-# %%
+# returns: distance to the next boundary between Earth layers, along current trajectory
+# input: current position, direction vector, radius of the boundary from Earth centre.
 def dist_to_boundary_new(posn, vhat, Rboundary):
-    # write equation of sphere in at^2 + bt + c form
+    # write equation of sphere in at^2 + bt + c form, with radius Rboundary
+    # determine where this sphere intersects with the projected path along direction vector
 
     a = vhat[0]**2 + vhat[1]**2 + vhat[2]**2
     b = 2*vhat[0]*posn[0] + 2*vhat[1]*posn[1]+ 2*vhat[2]*posn[2]
@@ -205,12 +180,11 @@ def dist_to_boundary_new(posn, vhat, Rboundary):
 
     disc = b**2 - 4*a*c
 
-    # print(disc, a, b, c)
     if disc < 0:
         return 0
     else:
         ts = np.roots([a, b, c])
-        #print(ts, ts[np.where(ts>0)])
+
         try:
             tval = np.min(ts[np.where(ts>=0)])
         except ValueError:
@@ -219,13 +193,16 @@ def dist_to_boundary_new(posn, vhat, Rboundary):
         dy = vhat[1]*tval
         dz= vhat[2]*tval
         dist = np.sqrt(dx**2 + dy**2 + dz**2)
-        # print(dist)
+
         return dist
     
+######## DEFINE FUNCTIONS TO PERFORM SIMULATION OF TRAJECTORIES THROUGH EARTH
 
-# %%
-# NEW VERSION
-
+# returns: constituent trajectories through one single layer of the Earth:
+#           their tracked positions and velocities over time, and the time taken to exit layer.
+# input: constituent parameters (mx, sigmand), number of constituents
+#           their initial positions, velocities upon entering layer,
+#           radius of layer from centre of Earth, and name of layer ("crust", "core", or "mantle")
 def get_trajectories_layer(mx, sigmand, num_particles, posns, vhats, vi, Rboundary, layer):
 
     xs = [posns[0]]
@@ -246,9 +223,8 @@ def get_trajectories_layer(mx, sigmand, num_particles, posns, vhats, vi, Rbounda
     dist_boundary = np.array([dist_to_boundary_new([xs[-1][i], ys[-1][i], zs[-1][i]], [vhatxs[i], vhatys[i], vhatzs[i]], Rboundary) for i in range(num_particles)])
 
     i = 0
-    num_steps = 100
 
-
+    # we simulate particles until at least 99% of them are within 1 km of the layer's boundary. 
     while len(np.where(dist_boundary > 1)[0]) > 0.01*num_particles:
 
 
@@ -373,10 +349,11 @@ def get_trajectories_layer(mx, sigmand, num_particles, posns, vhats, vi, Rbounda
     
     return xs, ys, zs, vhatxs, vhatys, vhatzs, vs, ttot
 
-# %%
-# returns tracked xs, ys, zs, final velocities and final times.
+# returns: constituent trajectories through the whole Earth:
+#           their tracked positions and velocities over time, and the time taken to exit the Earth.
+# input: constituent parameters in the "data" array: [mass, constituent-nucleon cross-section, entry angle, # of particles to simulate]
 def earth_trajectory(data):
-    print("hi")
+
     mx = data[0]
     sigmand = data[1]
     theta_entry = data[2]
@@ -388,7 +365,6 @@ def earth_trajectory(data):
 
     phi = np.pi/2
     theta_azim = np.pi/2
-    theta_v = -1*(np.pi - theta_azim - theta_entry)
 
     vhatx = np.sin(-1*(np.pi - theta_azim - theta_entry))*np.cos(phi)*np.ones(num_particles)
     vhaty = np.sin(-1*(np.pi - theta_azim - theta_entry))*np.sin(phi)*np.ones(num_particles)
@@ -396,7 +372,7 @@ def earth_trajectory(data):
 
     print("== Run for mx = {} GeV, sigma = {} cm^2, theta = {} degrees.".format(mx, sigmand, theta_entry))
 
-    # first, crust layer
+    # below, we simulate constituents first passing through the Earth crust, then mantle, then core, then mantle, then crust, until re-exit
 
     xs, ys, zs, vhatxs, vhatys, vhatzs, vs, ttot = get_trajectories_layer(mx, sigmand, num_particles, [xi, yi, zi], [vhatx, vhaty, vhatz], vi, Rmantle, "crust")
 
@@ -424,6 +400,7 @@ def earth_trajectory(data):
 
     tf = np.array(ttot[-1]) + np.array(ttot2[-1])+ np.array(ttot3[-1])+ np.array(ttot4[-1]) + np.array(ttot5[-1])
 
+    # we save the data to pkl format. 
     pd.to_pickle(np.array(xs), "DataOct/Xs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
     pd.to_pickle(np.array(ys), "DataOct/Ys_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
     pd.to_pickle(np.array(zs), "DataOct/Zs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
@@ -434,26 +411,33 @@ def earth_trajectory(data):
 
     return 0
 
-# %%
+######## RUNNING & PARALLELIZING THE CODE
+
 # DEFINING RunParameters
-cpus = int(os.environ['SLURM_CPUS_PER_TASK'])
+cpus = int(os.environ['SLURM_CPUS_PER_TASK']) # set to however many CPUs you wish to parallelize over
 print("Working across {} CPUs.".format(cpus))
-# mxs = np.append(10**np.linspace(2, 10, 20), [1e3, 2e3])
+
+# define the constituent mass and cross-section ranges to simulate
+mxs_initial = np.append(10**np.linspace(2, 10, 20), [1e3, 2e3])
 mxs_extended = 10**np.array([np.float64(10.421052631578947), np.float64(10.842105263157894), np.float64(11.263157894736842), np.float64(11.68421052631579), np.float64(12.105263157894736)])
 mxs_specific = [1e6]
 
-mxs = mxs_specific #np.append(10**np.linspace(2, 10, 20), mxs_extended)
-
+mxs = np.append(mxs_initial, mxs_extended)
 
 sigmas = 10**np.linspace(-41, -37, 20)
 
+# define the entry angles to simulate
+# either sample from thetavals using the 2*sintheta*costheta distribution, or using particular angles 
 thetavals = np.linspace(0, np.pi/2, 50)
 thetaprobs = np.array([2*np.sin(th)*np.cos(th) for th in thetavals])
 
+# here we show the particular angles used in this paper: we sampled them once, then kept them fixed for ease of plotting & comparison later.
 thetaentries = [0.1282282715750, 0.2564565431501, 0.5129130863003, 0.5449701541941, 0.7052554936630, 0.7373125615567, 0.8014266973443, 0.8334837652381, 0.9296549689194, 0.9617120368132, 1.1219973762820, 1.1861115120696, 1.2181685799633, 1.2502256478571, 1.3784539194322]#np.random.choice(thetavals, p = thetaprobs/np.sum(thetaprobs), size=20)
 
+# number of DM constituents to simulate
 num_particles = 1000
 
+# set up multi-processing arguments
 args = []
 
 for i in range(len(mxs)):
@@ -461,6 +445,7 @@ for i in range(len(mxs)):
         for k in range(len(thetaentries)):
             args.append((mxs[i], sigmas[j], thetaentries[k], num_particles))
 
+# initialize positions of constituents when they first cross the Earth
 xi = np.zeros(num_particles)*0
 yi = np.ones(num_particles)*(Rearth-1)
 zi = np.zeros(num_particles)*0
@@ -469,7 +454,7 @@ start_time = time.time()
 
 if __name__ == "__main__":
     
-    # SET UP MULTIPROCESSING
+    # MULTIPROCESSING
 
     num_pool = cpus
 
