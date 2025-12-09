@@ -1,44 +1,39 @@
 # %%
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-import sys
-from scipy.stats import norm
-colors = matplotlib.colormaps['Dark2'].colors
-plt.rcParams["figure.dpi"] = 600
-import seaborn as sns
 import pandas as pd
-import itertools
 import time
 import multiprocessing
 import pathlib
 import scipy
 import kdetools
 from scipy.integrate import quad
+from helpful_functions import *
 # %%
 
-# UNITS
+########  DEFINE GLOBAL UNITS & CONSTANTS
 
-mp = 0.938 # GeV
 GeV = 1
+mp = 0.938*GeV
 gram = 5.62e23*GeV
-cm = 1/(1000*100)
 km = 1
+cm = 1/(1e5) * km
+
+sec=1
+c = 299792.458*km/sec
+
+######## DEFINE EARTH COMPOSITION PARAMETERS
 
 Rearth = 6371*km
 Rcore = 3480*km
 Rmantle = 6346*km
 
-sec=1
-c = 300000*km/sec
-
+####### DEFINE TARGET IN DETECTION EXPERIMENT
 target_name = "Xenon"
 
-# input parameters
+######## DEFINE FUNCTIONS TO CALCULATE TIMING OF SCATTERS
 
-def mu(a, b):
-    return a*b/(a+b)
-
+# returns: expected constituent spread size, weighted average over entry angles
+# inputs, mx, sigmand
 def get_spreadsize(mx, sigmand):
     data = np.load("DataOctProcessed/SummaryData_mx-{}_sigma-{}.pkl".format(mx, sigmand), allow_pickle=True)
 
@@ -46,6 +41,8 @@ def get_spreadsize(mx, sigmand):
 
     return np.mean(spreadsizes)
 
+# returns: number density of target atom in noble liquid detector (atom/cm^3)
+# input: name of element ("Xenon", "Argon")
 def nAdetector(element):
     nAr = 1.4 * 6.022e23/40 # target atoms per cm^3
     nXe = 3.52 * 6.022e23/131 # target atoms per cm^3
@@ -55,6 +52,8 @@ def nAdetector(element):
         return nAr
     return 0
 
+# returns: expected flux of DM composites through the earth (sec^-1)
+# input: constituent mass (mx) and constituent number (Nd)
 def num_composites_earthpersec(Nd, mx):
     rhodm = 0.3*GeV/cm**3 # in m/km^3
     Md = Nd*mx*GeV
@@ -62,34 +61,16 @@ def num_composites_earthpersec(Nd, mx):
     flux = rhodm*veldm/Md # km^(-2)s^-1
     return flux*(np.pi*Rearth**2)
 
-def Rnuc(A):
-    sk = 0.9/0.197 #(* nuclear skin thickness, GeV^-1 *)
-    a =  0.52/0.197 #(* GeV^-1 *)
-    R0 = (1.23*A**(1/3) - 0.6)/0.197 # GeV^-1
-    Rnuc = (np.sqrt(R0**2 + (7/3)* np.pi**2* a**2 - 5*sk**2))
-
-    return Rnuc
-
-def helm2(q, r, s): #(* Helm form factor, squared, for momentum transfer q, radius r, and nuclear skin thickness s *)
-    #q = np.sqrt(2*mA*Er)
-
-    #if q == 0:
-    #    return 1
-
-    def j1(x):
-        return np.sin(x)/x**2 - np.cos(x)/x; # spherical Bessel function
-    Fa2 = (3*(j1(q*r)/(q*r)))**2*np.exp(-(q*s)**2)*np.heaviside(q*r-0.0001, 1)+np.heaviside(0.0001 - q*r, 1)
-
-    return  Fa2
-
-
+# returns: expected constituent speed, weighted average over entry angles
+# inputs, mx, sigmand
 def get_velocity(mx, sigmand):
     data = np.load("DataOctProcessed/SummaryData_mx-{}_sigma-{}.pkl".format(mx, sigmand), allow_pickle=True)
     vs = np.float64(data[:,-1])
     return np.mean(vs)
 
-
-def sigmaAddetector2(element, sigmand, mx, vel): # cm^2
+# returns: DM constituent-nucleus cross-section with target nucleus, cm^2
+# input: index of target nucleus, DM mass in GeV,  DM constituent-nucleon cross-section in cm^2, and DM velocity in km/s.
+def sigmaAddetector(element, sigmand, mx, vel): # cm^2
     if element == "Xenon":
         A = 131
     elif element == "Argon":
@@ -100,25 +81,27 @@ def sigmaAddetector2(element, sigmand, mx, vel): # cm^2
 
     func_dsigmaAd = lambda Er: A**2 * sigmand * (mu(mA, mx)/mu(mp, mx))**2 * helm2(np.sqrt(2*mA*Er), Rnuc(A), s=0.9/0.197)* helm2(np.sqrt(2*mA*Er), Rnuc(A), s=0.9/0.197)*np.heaviside(np.sqrt(2)*vel*mu(mx, mA)- np.sqrt(2*mA*Er), 1)
 
-    sigmaAd = mA/(2*(mu(mA, mx)*(vel))**2)*quad(func_dsigmaAd, 0, Ermax, epsabs=1.e-20, epsrel=1.e-20, limit=50)[0]#quad(func_dsigmaAd, 0, Ermax, epsabs=1.e-20, epsrel=1.e-20, limit=50)[0]
+    sigmaAd = mA/(2*(mu(mA, mx)*(vel))**2)*quad(func_dsigmaAd, 0, Ermax, epsabs=1.e-20, epsrel=1.e-20, limit=50)[0]
 
     return sigmaAd
 
-
+# returns: expected # of scatters within detecor
 def ScattersPerCone(mx, sigma, Nd, Rconedata, target='Xenon'):
-    Rcone = Rconedata * 1000 * 100 # in cm
-    Adetector = 1*(100**2) # cm^2
+    Rcone = Rconedata *cm #
+    Adetector = 1*(100**2) # 1 m^2 -> cm^2
     l = 1 * 100 # cm
 
     constituentsindetector = min(Nd*Adetector/(np.pi*Rcone**2), Nd)
-    vel = get_velocity(10**mx, 10**sigma)/300000
-    scatterperconstituent = nAdetector(target)*sigmaAddetector2(target, 10**sigma, 10**mx, vel)*l
+    vel = get_velocity(10**mx, 10**sigma)/c
+    scatterperconstituent = nAdetector(target)*sigmaAddetector(target, 10**sigma, 10**mx, vel)*l
     return constituentsindetector*scatterperconstituent
 
 
 
 
-
+# returns: what is the time delay between two successive scatters from the same constituent cloud,
+#           for a range of constituent numbers (N_D)?
+# input: data array as above.
 def get_dt(data):
     # given a number of scatters per cone, what is dt between two scatters?
     mx = data[0]
@@ -129,7 +112,6 @@ def get_dt(data):
 
     for Nd in Nds:
 
-        # first find number of scatters, based on 
         rcone = get_spreadsize(mx, sigmand)
         num_scatters = ScattersPerCone(np.log10(mx), np.log10(sigmand), Nd, rcone)
         if num_scatters <= 1:
@@ -141,9 +123,7 @@ def get_dt(data):
         print("== Run for mx = {} GeV, sigma = {} cm^2.".format(mx, sigmand))
         filesR = np.sort([str(f) for f in pathlib.Path().glob("DataOctProcessed/SpreadRs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
         filesT = np.sort([str(f) for f in pathlib.Path().glob("DataOctProcessed/FinalTs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
-        # filesX = np.sort([str(f) for f in pathlib.Path().glob("DataMayFresh/FinalXs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
-        # filesY = np.sort([str(f) for f in pathlib.Path().glob("DataMayFresh/FinalYs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
-        # filesZ = np.sort([str(f) for f in pathlib.Path().glob("DataMayFresh/FinalZs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+
         filesV = np.sort([str(f) for f in pathlib.Path().glob("DataOctProcessed/FinalVs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
         ind = filesR[0].find("angle-")+len("angle-")
         angles = [f[ind:ind+15] for f in filesR]
@@ -176,6 +156,8 @@ def get_dt(data):
 
 
             if np.max(ts) - np.min(ts) <= 1e-9:
+                # we do not expect the dt to be larger than nanoseconds,
+                # we do not plot this data point
                 print("NO POINT IN RUNNING", mx, sigmand, angles[i])
                 mean_tdiff +=(np.max(ts) - np.min(ts))/num_scatters
                 proc += 0
@@ -194,13 +176,13 @@ def get_dt(data):
                         twindow = 2*sigma
                         dt = twindow/num_scatters
                         dtoverr += dt/numtrials
-                    print("NO EXCEPTION", mx, sigmand, angles[i], np.max(ts), np.min(ts), dtoverr)
+
                     proc += 1
                 except:
                     dtoverr = 0
                     (mu, sigma) = scipy.stats.norm.fit(ts)
                     twindow = 2*sigma 
-                    print("EXCEPTION:", mx, sigmand, angles[i], np.max(ts), np.min(ts), twindow)
+
                     dtoverr = twindow/num_scatters
                     proc += 2
 
@@ -215,9 +197,8 @@ def get_dt(data):
     return 0
 
 
+######## RUNNING & PARALLELIZING THE CODE
 
-
-# DEFINING RunParameters
 cpus = int(multiprocessing.cpu_count())
 print("Working across {} CPUs.".format(cpus))
 mxs = np.append(10**np.linspace(2, 10, 20), [10**np.float64(10.421052631578947), 10**np.float64(10.842105263157894), 10**np.float64(11.263157894736842), 10**np.float64(11.68421052631579), 10**np.float64(12.105263157894736)])
