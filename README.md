@@ -1,4 +1,4 @@
-# DM Disassembly in the Earth
+# DarkDisassembly: DM Disassembly in the Earth
 
 This code simulates the trajectory of loosely bound composite DM that is 
 disassembled into individual constituents as it traverses the Earth.
