@@ -98,7 +98,8 @@ def get_trajectories_layer(mx, sigmand, num_particles, posns, vhats, vi, Rbounda
         else:
             theta_cm = np.random.uniform(-np.pi, np.pi, size=scatters)
             phi = np.random.uniform(0, np.pi, size=scatters)
-            targets = np.array([get_target(rs[active_particles[scattered_particles]][i], 1)[0] for i in range(scatters)])
+            current_vs = vs[-1]
+            targets = np.array([get_target(rs[active_particles[scattered_particles]][i], 1, mx, sigmand, current_vs[active_particles[scattered_particles]][i])[0] for i in range(scatters)])
             mAs = elements[targets]*mp
             theta_lab = np.arctan((mAs*np.sin(theta_cm))/(mx + mAs*np.cos(theta_cm)))
             xdisp = 0
@@ -238,11 +239,11 @@ def earth_trajectory(data):
     tf = np.array(ttot[-1]) + np.array(ttot2[-1])+ np.array(ttot3[-1])+ np.array(ttot4[-1]) + np.array(ttot5[-1])
 
     # we save the data to pkl format. 
-    pd.to_pickle(np.array(xs), "DataOct/Xs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
-    pd.to_pickle(np.array(ys), "DataOct/Ys_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
-    pd.to_pickle(np.array(zs), "DataOct/Zs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
-    pd.to_pickle(np.array(vs5), "DataOct/Vs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
-    pd.to_pickle(np.array(tf), "DataOct/Ts_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
+    pd.to_pickle(np.array(xs), "Data/Xs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
+    pd.to_pickle(np.array(ys), "Data/Ys_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
+    pd.to_pickle(np.array(zs), "Data/Zs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
+    pd.to_pickle(np.array(vs5), "Data/Vs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
+    pd.to_pickle(np.array(tf), "Data/Ts_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, theta_entry))
 
     print("Done saving!")
 

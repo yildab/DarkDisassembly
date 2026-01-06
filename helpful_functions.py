@@ -152,11 +152,30 @@ def lambdaMFP(r, mx, sigmand, vel):
             lambdaT += lambdainv
     return 1/lambdaT * cm
 
-# returns: a number of randomly-chosen target atoms to use at the point of scattering, based on elemental abundances
+def sigmaAd2(Aind, sigmand, mx): # cm^2
+    A = elements[Aind]
+    mA = A*mp
+    sigmaAd = A**2 * sigmand * (mu(mA, mx)/mu(mp, mx))**2# * helm2(q, Rnuc, sk) DO THIS PART LATER
+
+    return sigmaAd
+ 
+def lambdaMFP2(r, sigmand, mx): # in km
+    lambdaT = 0
+    for Aind in range(len(elements)):
+        lambdainv = nA(Aind, r)*sigmaAd2(Aind, sigmand, mx) # cm
+        if lambdainv != 0:
+            lambdaT += lambdainv
+    return 1/lambdaT * cm
+
+
+# returns: a number of randomly-chosen target atoms to use at the point of scattering
+#               based on elemental abundances & cross-sections
 # input: radius from centre of Earth in km, a number of desired samples
-def get_target(r, num): # returns index of target atom
+def get_target(r, num, mx, sigmand, vel): # returns index of target atom
     targetcomp = composition(r)
-    Aind = np.random.choice(range(len(elements)), p = targetcomp/np.sum(targetcomp), size=num)
+    targetsigmaAd = np.array([sigmaAd(Aind, mx, sigmand, vel) for Aind in range(len(elements))])
+    probs = (targetcomp * targetsigmaAd)/np.sum(targetcomp * targetsigmaAd)
+    Aind = np.random.choice(range(len(elements)), p = probs, size=num)
     return Aind
 
 # returns: sampled distance until next scatter for a set of constituents, in km

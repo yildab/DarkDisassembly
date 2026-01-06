@@ -43,11 +43,12 @@ def return_spread(data):
     sigmand = data[1]
 
     print("== Run for mx = {} GeV, sigma = {} cm^2.".format(mx, sigmand))
-    filesX = np.sort([str(f) for f in pathlib.Path().glob("DataOct/Xs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
-    filesY = np.sort([str(f) for f in pathlib.Path().glob("DataOct/Ys_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
-    filesZ = np.sort([str(f) for f in pathlib.Path().glob("DataOct/Zs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
-    filesV = np.sort([str(f) for f in pathlib.Path().glob("DataOct/Vs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
-    filesT = np.sort([str(f) for f in pathlib.Path().glob("DataOct/Ts_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+    filesX = np.sort([str(f) for f in pathlib.Path().glob("Data/Xs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+    filesY = np.sort([str(f) for f in pathlib.Path().glob("Data/Ys_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+    filesZ = np.sort([str(f) for f in pathlib.Path().glob("Data/Zs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+    filesV = np.sort([str(f) for f in pathlib.Path().glob("Data/Vs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+    filesT = np.sort([str(f) for f in pathlib.Path().glob("Data/Ts_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+
     ind = filesX[0].find("angle-")+len("angle-")
     angles = [f[ind:ind+15] for f in filesX]
 
@@ -72,6 +73,8 @@ def return_spread(data):
 
         rs = np.sqrt(xs**2 + ys**2 + zs**2)
 
+        # print(ts)
+
         vhatfs = np.stack(np.array([xst[-1] - xst[-5], yst[-1] - yst[-5], zst[-1] - zst[-5]]), axis=1)
 
         # rescale things so everything is exactly at earth surface, but only if
@@ -86,10 +89,12 @@ def return_spread(data):
 
         dist = rs_new - rs
 
-        mfps = [lambdaMFP(r, sigmand, mx) for r in rs]
+        mfps = [lambdaMFP(rs[i], mx, sigmand, vs[i]) for i in range(len(rs))]
 
         ts_new = np.where(dist > mfps, np.nan, ts + dist/vs)
         ts = ts_new
+
+        # print(ts)
 
         # here, calculate spread radius 
 
@@ -150,15 +155,15 @@ def return_spread(data):
 
         # save final XYZ, R, T, for each angle
 
-        pd.to_pickle(np.array(xs[nonoutlier_indices]), "DataOctProcessed/FinalXs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
-        pd.to_pickle(np.array(ys[nonoutlier_indices]), "DataOctProcessed/FinalYs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
-        pd.to_pickle(np.array(zs[nonoutlier_indices]), "DataOctProcessed/FinalZs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
-        pd.to_pickle(np.array(vs[nonoutlier_indices]), "DataOctProcessed/FinalVs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
-        pd.to_pickle(np.array(spread_rs[nonoutlier_indices]), "DataOctProcessed/SpreadRs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
-        pd.to_pickle(np.array(ts[nonoutlier_indices]), "DataOctProcessed/FinalTs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
+        pd.to_pickle(np.array(xs[nonoutlier_indices]), "DataProcessed/FinalXs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
+        pd.to_pickle(np.array(ys[nonoutlier_indices]), "DataProcessed/FinalYs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
+        pd.to_pickle(np.array(zs[nonoutlier_indices]), "DataProcessed/FinalZs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
+        pd.to_pickle(np.array(vs[nonoutlier_indices]), "DataProcessed/FinalVs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
+        pd.to_pickle(np.array(spread_rs[nonoutlier_indices]), "DataProcessed/SpreadRs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
+        pd.to_pickle(np.array(ts[nonoutlier_indices]), "DataProcessed/FinalTs_mx-{}_sigma-{}_angle-{}.pkl".format(mx, sigmand, angles[i]))
 
     # save summary data, saved for all entry angles
-    pd.to_pickle(np.array(summary_array), "DataOctProcessed/SummaryData_mx-{}_sigma-{}.pkl".format(mx, sigmand))
+    pd.to_pickle(np.array(summary_array), "DataProcessed/SummaryData_mx-{}_sigma-{}.pkl".format(mx, sigmand))
 
     print("All done saving!")
 
@@ -169,9 +174,14 @@ def return_spread(data):
 
 cpus = int(multiprocessing.cpu_count())
 print("Working across {} CPUs.".format(cpus))
-mxs = np.append(10**np.linspace(2, 10, 20), [10**np.float64(10.421052631578947), 10**np.float64(10.842105263157894), 10**np.float64(11.263157894736842), 10**np.float64(11.68421052631579), 10**np.float64(12.105263157894736)])
-sigmas = 10**np.linspace(-41, -37, 20)
-
+# mxs = np.append(10**np.linspace(2, 10, 20), [10**np.float64(10.421052631578947), 10**np.float64(10.842105263157894), 10**np.float64(11.263157894736842), 10**np.float64(11.68421052631579), 10**np.float64(12.105263157894736)])
+# # mxs = [1832.9807108324355]#[10**np.linspace(2, 10, 20)[2]]
+# sigmas = 10**np.linspace(-41, -37, 20)
+# mxs = [1832.9807108324355]#[10**np.linspace(2, 10, 20)[2]]
+sigmas = [10**np.linspace(-41, -37, 20)[-5]]
+# return_spread([mxs[0], sigmas[5]])
+mxs = [1e3]
+# sigmas = [1e-37, 1e-38]
 args = []
 
 for i in range(len(mxs)):

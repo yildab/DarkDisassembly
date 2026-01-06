@@ -35,7 +35,7 @@ target_name = "Xenon"
 # returns: expected constituent spread size, weighted average over entry angles
 # inputs, mx, sigmand
 def get_spreadsize(mx, sigmand):
-    data = np.load("DataOctProcessed/SummaryData_mx-{}_sigma-{}.pkl".format(mx, sigmand), allow_pickle=True)
+    data = np.load("DataProcessed/SummaryData_mx-{}_sigma-{}.pkl".format(mx, sigmand), allow_pickle=True)
 
     spreadsizes = np.float64(data[:,3])
 
@@ -64,7 +64,7 @@ def num_composites_earthpersec(Nd, mx):
 # returns: expected constituent speed, weighted average over entry angles
 # inputs, mx, sigmand
 def get_velocity(mx, sigmand):
-    data = np.load("DataOctProcessed/SummaryData_mx-{}_sigma-{}.pkl".format(mx, sigmand), allow_pickle=True)
+    data = np.load("DataProcessed/SummaryData_mx-{}_sigma-{}.pkl".format(mx, sigmand), allow_pickle=True)
     vs = np.float64(data[:,-1])
     return np.mean(vs)
 
@@ -87,7 +87,7 @@ def sigmaAddetector(element, sigmand, mx, vel): # cm^2
 
 # returns: expected # of scatters within detecor
 def ScattersPerCone(mx, sigma, Nd, Rconedata, target='Xenon'):
-    Rcone = Rconedata *cm #
+    Rcone = Rconedata/cm # km -> cm
     Adetector = 1*(100**2) # 1 m^2 -> cm^2
     l = 1 * 100 # cm
 
@@ -121,10 +121,10 @@ def get_dt(data):
             continue
 
         print("== Run for mx = {} GeV, sigma = {} cm^2.".format(mx, sigmand))
-        filesR = np.sort([str(f) for f in pathlib.Path().glob("DataOctProcessed/SpreadRs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
-        filesT = np.sort([str(f) for f in pathlib.Path().glob("DataOctProcessed/FinalTs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+        filesR = np.sort([str(f) for f in pathlib.Path().glob("DataProcessed/SpreadRs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+        filesT = np.sort([str(f) for f in pathlib.Path().glob("DataProcessed/FinalTs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
 
-        filesV = np.sort([str(f) for f in pathlib.Path().glob("DataOctProcessed/FinalVs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
+        filesV = np.sort([str(f) for f in pathlib.Path().glob("DataProcessed/FinalVs_mx-"+ str(mx) + "_sigma-"+ str(sigmand) +"_**")])
         ind = filesR[0].find("angle-")+len("angle-")
         angles = [f[ind:ind+15] for f in filesR]
         proc = 0
@@ -144,54 +144,73 @@ def get_dt(data):
             rs = rs[np.where(np.isnan(ts) == False)]
             ts = tsnew
 
-
+            # print("T RANGE : {}/{}".format(i, numangles), mx, sigmand, angles[i], np.max(ts), np.min(ts), np.max(ts) - np.min(ts))
 
             z_score = np.abs(scipy.stats.zscore(np.log10(ts), nan_policy='propagate'))
             z_score = np.where(np.isnan(z_score), 0, z_score)
 
-            nonoutliers = np.where(z_score < 2)[0]
+            nonoutliers = np.where(z_score < 3)[0]
 
             ts = ts[nonoutliers]
             rs = rs[nonoutliers]
 
+            print("T RANGE:", np.max(ts), np.min(ts), np.max(ts) - np.min(ts))
 
-            if np.max(ts) - np.min(ts) <= 1e-9:
+            if np.max(ts) - np.min(ts) <= 1e-8:
                 # we do not expect the dt to be larger than nanoseconds,
                 # we do not plot this data point
-                print("NO POINT IN RUNNING", mx, sigmand, angles[i])
                 mean_tdiff +=(np.max(ts) - np.min(ts))/num_scatters
+                print("NO POINT IN RUNNING", mx, sigmand, angles[i], (np.max(ts) - np.min(ts))/num_scatters)
                 proc += 0
             else:
-                numtrials=100
+                numtrials=200
                 data = np.stack((rs, ts), axis=1)
                 dtoverr = 0
 
-                try:
-                    time_kde = kdetools.gaussian_kde(data.T)
+                if rcone > 1e-3:
+                    try:
+                        time_kde = kdetools.gaussian_kde(data.T)
+                        print("WE ARE TRYING")
 
-                    for j in range(numtrials):
-                        rval = rcone*np.sqrt(np.random.rand())
-                        tsample = time_kde.conditional_resample(1000, x_cond=np.array([rval]), dims_cond=[0]).ravel()
-                        (mu, sigma) = scipy.stats.norm.fit(tsample)
-                        twindow = 2*sigma
-                        dt = twindow/num_scatters
-                        dtoverr += dt/numtrials
+                        for j in range(numtrials):
+                            rval = rcone*np.sqrt(np.random.rand())
+                            tsample = time_kde.conditional_resample(1000, x_cond=np.array([rval]), dims_cond=[0]).ravel()
+                            if np.max(tsample) - np.min(tsample) <= 1e-8:
+                                dt =(np.max(tsample) - np.min(tsample))/num_scatters
+                                print("TOO SMALL", dt)
 
-                    proc += 1
-                except:
+                            else:
+                                (mu, sigma) = scipy.stats.norm.fit(tsample)
+                                twindow = 2*sigma
+                                dt = twindow/num_scatters
+                            # print(np.min(tsample), np.max(tsample), mu, (np.max(ts) - np.min(ts)), rval)
+                            dtoverr += dt/numtrials
+                    except:
+                        print("WE ARE EXCEPTING")
+                        dtoverr = 0
+                        (mu, sigma) = scipy.stats.norm.fit(ts)
+                        twindow = 2*sigma 
+
+                        dtoverr = twindow/num_scatters
+                        proc += 2
+
+                else:
+                    print("WE ARE EXCEPTING")
                     dtoverr = 0
                     (mu, sigma) = scipy.stats.norm.fit(ts)
                     twindow = 2*sigma 
 
                     dtoverr = twindow/num_scatters
                     proc += 2
-
+                
+                print("WE RAN IT",mx, sigmand, angles[i], np.max(ts) - np.min(ts), dtoverr)
                 mean_tdiff += dtoverr
+        print(mean_tdiff/numangles)
         dts.append(mean_tdiff/numangles)
         processes.append(proc)
 
 
-    pd.to_pickle(np.array([Nds, dts, processes]), "DataOctProcessed/{}Nonoutliers/FinalDTs_mx-{}_sigma-{}.pkl".format(target_name, mx, sigmand))
+    pd.to_pickle(np.array([Nds, dts, processes]), "DataProcessed/FinalDTs_mx-{}_sigma-{}.pkl".format(mx, sigmand))
     print("Done saving! -- ", dts)
 
     return 0
@@ -201,10 +220,14 @@ def get_dt(data):
 
 cpus = int(multiprocessing.cpu_count())
 print("Working across {} CPUs.".format(cpus))
-mxs = np.append(10**np.linspace(2, 10, 20), [10**np.float64(10.421052631578947), 10**np.float64(10.842105263157894), 10**np.float64(11.263157894736842), 10**np.float64(11.68421052631579), 10**np.float64(12.105263157894736)])
-sigmas = 10**np.linspace(-41, -37, 20)
-
+# mxs = np.append(10**np.linspace(2, 10, 20), [10**np.float64(10.421052631578947), 10**np.float64(10.842105263157894), 10**np.float64(11.263157894736842), 10**np.float64(11.68421052631579), 10**np.float64(12.105263157894736)])
+# sigmas = 10**np.linspace(-41, -37, 20)
+# mxs = [mxs[-6]]
 args = []
+mxs = [1e3]
+sigmas = [10**np.linspace(-41, -37, 20)[-5]]
+
+# get_dt([mxs[0], sigmas[5]])
 
 for i in range(len(mxs)):
     for j in range(len(sigmas)):
